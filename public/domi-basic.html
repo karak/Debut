@@ -14,26 +14,30 @@
     background-size: 24px 24px;
 }
 </style>
-<!--<script src="jquery-2.0.3.min.js"></script>-->
+<link rel="stylesheet" href="jquery.mobile-1.3.2.min.css" />
+<script src="jquery-2.0.3.min.js"></script>
+<script src="knockout-2.3.0.min.js"></script>
+<script src="jquery.mobile-1.3.2.min.js"></script>
+<!--
 <link rel="stylesheet" href="https://code.jquery.com/mobile/1.3.2/jquery.mobile-1.3.2.min.css" />
 <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
 <script src="https://code.jquery.com/mobile/1.3.2/jquery.mobile-1.3.2.min.js"></script>
 <script src="https://ajax.aspnetcdn.com/ajax/knockout/knockout-2.2.1.js"></script>
-<!--<script src="knockout-2.3.0.min.js"></script>-->
+-->
 <script type="text/javascript" src="./carpet.js"></script>
 
 <script>
 var tagConfig = {
     treasure: function () {
-        return ('coins' in this.prototype);
+        return ('coins' in this);
     },
     action: function () {
         var card = this;
-        return carpet.isFunction(card.prototype['action']);
+        return carpet.isFunction(card['action']);
     },
     victory: function () {
         var card = this;
-        return ('victory' in card.prototype);
+        return ('victory' in card);
     },
     kingdom: function () {
         var card = this;
@@ -49,44 +53,53 @@ var mixinTag = (function (config) {
             value = config[key];
             properties[key] = value.call(this);
         }
-        this.prototype.tagged = properties;
+        this.tagged = properties;
     };
-} (tagConfig))
+} (tagConfig));
 
-var newVictoryCard = function (displayName, cost, victoryPoint) {
-    var constructor = function () {};
-    constructor.prototype.displayName = displayName || 'VictoryCard';
-    constructor.prototype.cost = cost || 0;
-    constructor.prototype.victoryPoint = victoryPoint || 0;
-    return constructor;
+var Copper ={
+    displayName: 'Copper',
+    cost: 0,
+    coins: 1
 };
-var Copper = function () {};
-Copper.prototype.displayName = 'Copper';
-Copper.prototype.cost = 0;
-Copper.prototype.coins = 1;
-var Silver = function () {};
-Silver.prototype.displayName = 'Silver';
-Silver.prototype.cost = 3;
-Silver.prototype.coins = 2;
-var Gold = function () {};
-Gold.prototype.displayName = 'Gold';
-Gold.prototype.cost = 6;
-Gold.prototype.coins = 3;
-var Estate = newVictoryCard('Estate', 1, 1);
-var Duchy = newVictoryCard('Duchy', 5, 3);
-var Province = newVictoryCard('Province', 8, 6);
-var Smithy = function () {};
-Smithy.prototype.displayName = 'Smithy';
-Smithy.prototype.cost = 4;
-Smithy.prototype.action = function (you) {
-    you.draw(2);
+var Silver = {
+    displayName: 'Silver',
+    cost: 3,
+    coins: 2
 };
-
-var Village = function () {};
-Village.prototype.displayName = 'Village';
-Village.prototype.cost = 3;
-Village.prototype.action = function (you) {
-    you.actionCount(you.actionCount() + 2);
+var Gold = {
+    displayName: 'Gold',
+    cost: 6,
+    coins: 3
+};
+var Estate = {
+    displayName: 'Estate',
+    cost: 1,
+    victory: 1
+};
+var Duchy = {
+    displayName: 'Duchy',
+    cost: 5,
+    victory: 3
+};
+var Province = {
+    displayName: 'Province',
+    cost: 8,
+    victory: 6
+};
+var Smithy = {
+    displayName: 'Smithy',
+    cost: 4,
+    action: function (you) {
+        you.draw(2);
+    }
+};
+var Village = {
+    displayName: 'Village',
+    cost: 3,
+    action: function (you) {
+        you.actionCount(you.actionCount() + 2);
+    }
 };
 
 var Player = function (nickName) {
@@ -135,11 +148,11 @@ var supplies = ([
     return new carpet.Supply(which, numberOfKingdomCards(which));
 }));
 
-supplies.lookup = function (cardConstructor) {
+supplies.lookup = function (cardPrototype) {
     var i, s;
     for (i = 0; i < supplies.length; ++i) {
         s = supplies[i];
-        if (s.which() === cardConstructor)
+        if (s.which() === cardPrototype)
             return s;
     }
     return null;
@@ -177,9 +190,9 @@ var SupplyViewModel = function (supply) {
         return supply.numberOfRemaining();
     }, this);
     
-    this.displayName = supply.which().prototype.displayName;
+    this.displayName = supply.which().displayName;
     
-    this.cost = supply.which().prototype.cost.toString();
+    this.cost = supply.which().cost.toString();
 };
 
 var SupplyGroupViewModel = function (label, supplies) {

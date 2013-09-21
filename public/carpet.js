@@ -155,11 +155,11 @@ var createEx = carpet.createEx = function (prototype/*, mixin1, mixi2*/) {
     return instance;
 };
 
-var instanciate = function (cardConstructor, source) {
-    var instance = Object.create(cardConstructor.prototype);
+var instanciate = function (cardPrototype, source) {
+    var instance = Object.create(cardPrototype);
     if (arguments.length < 2) source = null;
     instance.which = function () {
-        return cardConstructor;
+        return cardPrototype;
     };
     instance.naked = function () {
         return this;
@@ -338,16 +338,16 @@ carpet.Supply = (function () {
         };
     };
     
-    var Supply = function (cardConstructor, limit) {
+    var Supply = function (cardPrototype, limit) {
         var criteria = (limit !== undefined)? new LimitedCriteria(limit) : unlimitedCriteria;
         
-        this._which = cardConstructor;
+        this._which = cardPrototype;
         this.numberOfRemaining = ko.computed(function () {
             return (criteria.count? criteria.count() : '');
         }, this);
         this.available = criteria.available;
         this.push = function (card) {
-            if (card.which() !== cardConstructor) throw 'This card is not of this.';
+            if (card.which() !== cardPrototype) throw 'This card is not of this.';
             
             criteria.increase();
             return this;
@@ -355,14 +355,14 @@ carpet.Supply = (function () {
         this.pop = function () {
             var self = this;
             if (arguments.length === 0) {
-                var popped = instanciate(cardConstructor);
+                var popped = instanciate(cardPrototype);
                 criteria.decrease();
                 return popped;
             } else {
                 var n = arguments[0], i;
                 var allPopped = new Array(n);
                 for (i = 0; i < n; ++i)
-                    allPopped[i] = instanciate(cardConstructor);
+                    allPopped[i] = instanciate(cardPrototype);
                 criteria.decrease(n);
                 return new carpet.Bag(allPopped);
             }
