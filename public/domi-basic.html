@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja-jp">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">  
+<meta charset="utf-8">
+<title>Debut testbed</title>
+<style type="text/css">
+.sprite.card {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    background-image: url('data:image/svg+xml;utf8,data:image/svg+xml;utf8,<svg class="shadow" xmlns="http://www.w3.org/2000/svg" version="1.1"><rect x="0" y="0" width="24" height="24" style="fill:blue"></svg>');
+    background-position: 0 0;
+    background-size: 24px 24px;
+}
+</style>
+<!--<script src="jquery-2.0.3.min.js"></script>-->
+<link rel="stylesheet" href="https://code.jquery.com/mobile/1.3.2/jquery.mobile-1.3.2.min.css" />
+<script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+<script src="https://code.jquery.com/mobile/1.3.2/jquery.mobile-1.3.2.min.js"></script>
+<script src="https://ajax.aspnetcdn.com/ajax/knockout/knockout-2.2.1.js"></script>
+<!--<script src="knockout-2.3.0.min.js"></script>-->
+<script type="text/javascript" src="./carpet.js"></script>
+
+<script>
+var tagConfig = {
+    treasure: function () {
+        return ('coins' in this.prototype);
+    },
+    action: function () {
+        var card = this;
+        return carpet.isFunction(card.prototype['action']);
+    },
+    victory: function () {
+        var card = this;
+        return ('victory' in card.prototype);
+    },
+    kingdom: function () {
+        var card = this;
+        return card !== Copper && card !== Silver && card !== Gold &&
+            card !== Estate && card !== Duchy && card !== Province;
+    }
+};
+
+var mixinTag = (function (config) {
+    return function () {
+        var key, value, properties = {};
+        for (key in config) {
+            value = config[key];
+            properties[key] = value.call(this);
+        }
+        this.prototype.tagged = properties;
+    };
+} (tagConfig))
+
+var newVictoryCard = function (displayName, cost, victoryPoint) {
+    var constructor = function () {};
+    constructor.prototype.displayName = displayName || 'VictoryCard';
+    constructor.prototype.cost = cost || 0;
+    constructor.prototype.victoryPoint = victoryPoint || 0;
+    return constructor;
+};
+var Copper = function () {};
+Copper.prototype.displayName = 'Copper';
+Copper.prototype.cost = 0;
+Copper.prototype.coins = 1;
+var Silver = function () {};
+Silver.prototype.displayName = 'Silver';
+Silver.prototype.cost = 3;
+Silver.prototype.coins = 2;
+var Gold = function () {};
+Gold.prototype.displayName = 'Gold';
+Gold.prototype.cost = 6;
+Gold.prototype.coins = 3;
+var Estate = newVictoryCard('Estate', 1, 1);
+var Duchy = newVictoryCard('Duchy', 5, 3);
+var Province = newVictoryCard('Province', 8, 6);
+var Smithy = function () {};
+Smithy.prototype.displayName = 'Smithy';
+Smithy.prototype.cost = 4;
+Smithy.prototype.action = function (you) {
+    you.draw(2);
+};
+
+var Village = function () {};
+Village.prototype.displayName = 'Village';
+Village.prototype.cost = 3;
+Village.prototype.action = function (you) {
+    you.actionCount(you.actionCount() + 2);
+};
+
+var Player = function (nickName) {
+    this.nickName =nickName;
+    this.deck = new carpet.Stack();
+    this.discards = new carpet.Bag();
+    this.hands = new carpet.Bag();
+    //TODO: deck reshuffle()
+};
+
+Player.prototype.draw = function (n) {
+    var self = this;
+    var tmp = self.deck.limit(n).all(); //don't use forEach
+    tmp.forEach(function (card) {
+        card.moveTo(self.hands);
+    });
+    return self;
+};
+
+var TurnPlayerMixin = function () {
+    this.actionCount = ko.observable(1); 
+    this.buyCount = ko.observable(1);
+};
+
+var players = [new Player('Adam'), new Player('Bob'), new Player('Caroline')];
+
+var INITIAL_NUMBER_OF_HANDS = 5;
+var INITIAL_NUMBER_OF_COPPERS = 7;
+var INITIAL_NUMBER_OF_ESTATES = 3;
+var numberOfPlayers = players.length;
+var numberOfVictoryCards = (numberOfPlayers >= 3? 12 : 8);
+var numberOfActionCards = 10;
+var numberOfProvince = numberOfPlayers >= 6? 18 : (numberOfPlayers === 5? 15 : numberOfVictoryCards);
+var numberOfKingdomCards = function (card) {
+    return tagConfig.victory.call(card)? numberOfVictoryCards : numberOfActionCards;
+};
+
+var supplies = ([
+    new carpet.Supply(Copper, 60),
+    new carpet.Supply(Silver, 40),
+    new carpet.Supply(Gold, 30),
+    new carpet.Supply(Estate, numberOfVictoryCards + INITIAL_NUMBER_OF_ESTATES * numberOfPlayers),
+    new carpet.Supply(Duchy, numberOfVictoryCards),
+    new carpet.Supply(Province, numberOfProvince)
+]).concat([Smithy, Village].map(function (which) {
+    return new carpet.Supply(which, numberOfKingdomCards(which));
+}));
+
+supplies.lookup = function (cardConstructor) {
+    var i, s;
+    for (i = 0; i < supplies.length; ++i) {
+        s = supplies[i];
+        if (s.which() === cardConstructor)
+            return s;
+    }
+    return null;
+};
+
+carpet.mixinQuery(supplies);
+
+function setGameUp () {
+    var fromCoppers = supplies.lookup(Copper),
+        fromEstates = supplies.lookup(Estate);
+    players.forEach(function (player) {
+        fromCoppers.pop(INITIAL_NUMBER_OF_COPPERS).moveTo(player.deck);
+        fromEstates.pop(INITIAL_NUMBER_OF_ESTATES).moveTo(player.deck);
+        player.deck.shuffle();
+        player.draw(INITIAL_NUMBER_OF_HANDS);
+    });
+}
+
+/////////////////////////////////////////
+
+var PlayerViewModel = function (player) {
+    this.nickName = player.nickName;
+    this.hands = ko.computed(function() { return player.hands.all(); }, this);
+    this.deckHeight = ko.computed(function () { return player.deck.observe().count(); }, this);
+    this.coins = ko.computed(function() {
+        return player.hands./*observe().*/
+            where(function (card) { return tagConfig.treasure.call(card.which()); }).
+            map(function (card){ return card.coins; }).
+            sum();
+    }, this);
+};
+
+var SupplyViewModel = function (supply) {
+    this.numberOfRemaining = ko.computed(function () {
+        return supply.numberOfRemaining();
+    }, this);
+    
+    this.displayName = supply.which().prototype.displayName;
+    
+    this.cost = supply.which().prototype.cost.toString();
+};
+
+var SupplyGroupViewModel = function (label, supplies) {
+    this.label = label? label : false;
+    this.members = supplies.map(function (x) { return new SupplyViewModel(x); });
+};
+
+var SupplyGroupListViewModel = function (supplies, groupDefs) {
+    var members = new Array();
+    for (var groupName in groupDefs) {
+        var memberSupplies;
+        var memberValue = groupDefs[groupName];
+        if (carpet.isFunction(memberValue)) {
+            var predCard = memberValue;
+            memberSupplies = supplies.where(function (s) { return predCard(s.which()); }).all();
+        } else {
+            var memberCards = memberValue;
+            memberSupplies = memberCards.map(function (card) {
+                return supplies.lookup(card);
+            });
+        }
+        var groupViewModel = new SupplyGroupViewModel(groupName, memberSupplies);
+        
+        members.push(groupViewModel);
+    }
+    this.members = members;
+};
+
+
+$(document).on('pageinit', function (e) {
+    var totalEllapsedTurns = ko.observable(0);
+    var supplyGroups = new SupplyGroupListViewModel(supplies, {
+        '': [Copper, Silver, Gold, Estate, Duchy, Province],
+        'Kingdom': function (card) { return tagConfig.kingdom.call(card); }
+    });
+    
+    var pageViewModel = (new function () {
+        this.turn = ko.computed(function () { return 1 + Math.floor(totalEllapsedTurns() / players.length); }, this);
+        this.supplyGroups = supplyGroups;
+        this.players = players.map(function (player) { return new PlayerViewModel(player); });
+        
+        this.turnPlayer = ko.computed(function () {
+            var i = totalEllapsedTurns(), n = this.players.length;
+            var player = this.players[i % n];
+            return carpet.createEx(player, TurnPlayerMixin);
+        }, this);
+    } ());
+    
+    ko.applyBindings(
+        pageViewModel,
+        e.target    
+    );
+    
+    $('.requires-jquery-mobile-init').trigger('create');
+    
+    $(e.target).one('vclick', function () {
+        //TODO: next step()
+    });
+    
+    //init
+    setGameUp();
+});
+</script>
+<body>
+    <div data-role="page" id="main-page" data-theme="b">
+        <div data-role="header">
+            #<span data-bind="text: turn"></span>
+        </div>
+        <div data-role="content">
+            <div data-bind="with: turnPlayer">
+                <h3><span data-bind="text: nickName"></span>'s turn</h3>
+                <div class="ui-grid-d" data-bind="foreach: hands" class="requires-jquery-mobile-init">
+                    <div
+                        class="card-in-hands-cell"
+                        style="border: 1px solid white; padding: 2px 2px"
+                        data-bind="css: {
+                            'ui-block-a': $index() % 5 === 0, 
+                            'ui-block-b': $index() % 5 === 1, 
+                            'ui-block-c': $index() % 5 === 2, 
+                            'ui-block-d': $index() % 5 === 3, 
+                            'ui-block-e': $index() % 5 === 4
+                        }">
+                        <div><!-- class="carpet-tagged-treasure carpet-tagged-action carpet-tagged-victory" -->
+                            <span class="carpet-tag-marker carpet-tag-marker-for-treasure"></span>
+                            <span class="carpet-tag-marker carpet-tag-marker-for-kingdom"></span>
+                            <span class="carpet-tag-marker carpet-tag-marker-for-victory"></span>
+                            <span data-bind="text: displayName"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="float: right; width: auto; height: 1ex; text-align: right;">
+                    <span style="display: inline; height: 1ex; background-color: white;" data-bind="style: {width: deckHeight * 2  + 'px'}"></span>
+                </div>
+                <div style="float: left; margin: 30px 0;">
+                    action: <span data-bind="text: actionCount"></span>
+                    buy: <span data-bind="text: buyCount"></span>
+                    coins: <span data-bind="text: coins"></span>
+                </div>
+                <div style="clear: both"></div>
+                
+            </div>
+            
+            <div>
+                <h3>Supply</h3>
+                <div data-bind="template: {name: 'template-supply-listview'}" class="requires-jquery-mobile-init"></div>
+            </div>
+        </div>
+    </div>
+    <script type="text/html" id="template-supply-listview">
+        <ul data-role="listview" data-theme="c" data-bind="foreach: supplyGroups.members">
+            <li data-role="list-divider" data-bind="visible: label, text: label"></li>
+            <!-- ko foreach: members -->
+            <li>
+                <span data-bind="text: cost" style="border: 1px solid rgb(230, 230, 0); background-color: rgb(255, 255, 102); border-radius: 8px; height: 1ex; min-width: 1ex; width: 1ex; padding: 0 2px;"></span>
+                <span style="margin-left: 10px;" data-bind="text: displayName"></span>
+                <span class="ui-li-count" data-bind="text: numberOfRemaining"></span>
+            </li>
+            <!-- /ko -->
+        </ul>
+    </script>
+</body>
+</html>
