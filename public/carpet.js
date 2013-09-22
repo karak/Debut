@@ -147,11 +147,14 @@ QueryPrototypeMixin.call(Array.prototype);
 ////////////////////////////////////////////////////////////////
 
 var createEx = carpet.createEx = function (prototype/*, mixin1, mixi2*/) {
-    var mixins = Array.prototype.slice.call(arguments, 1);
-    var instance = Object.create(prototype);
-    mixins.forEach(function (mixin) {
+    var instance = Object.create(prototype),
+        mixin,
+        n = arguments.length,
+	i;
+    for (i = 1; i < n; ++i) {
+	mixin = arguments[i];
         mixin.call(instance);
-    });
+    }
     return instance;
 };
 
@@ -197,6 +200,11 @@ carpet.Bag = (function () {
         self.count = ko.computed(function () { return items().length; }, self);
     };
     QueryPrototypeMixin.call(Bag.prototype);
+
+    Bag.prototype.observe = function () {
+	this._items();
+	return this;
+    };
     
     Bag.prototype.forEach = function (fn) {
         var i, items;
@@ -215,7 +223,6 @@ carpet.Bag = (function () {
             var item = instanciate(card.which(), self);
             self._items.push(item);
         } else {
-            console.log('BAG');
             var cards = cardOrCards;
             self._items.valueWillMutate();
             var itemsUnwrapped = self._items();

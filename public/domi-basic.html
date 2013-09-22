@@ -13,6 +13,22 @@
     background-position: 0 0;
     background-size: 24px 24px;
 }
+
+li.slideup-on-click
+{
+    transition: top 80ms swing;
+}
+
+li.slideup-on-click.clicked
+{
+    position: relative;
+    top: -3px;
+}
+
+.button-invisible button, 
+.button-invisible a[data-role="button"] {
+    display: none;
+}
 </style>
 <link rel="stylesheet" href="jquery.mobile-1.3.2.min.css" />
 <script src="jquery-2.0.3.min.js"></script>
@@ -108,6 +124,13 @@ var Player = function (nickName) {
     this.discards = new carpet.Bag();
     this.hands = new carpet.Bag();
     //TODO: deck reshuffle()
+
+    this.coinsInHands = ko.computed(function() {
+        return this.hands.observe().
+            where(function (card) { return tagConfig.treasure.call(card.which()); }).
+            map(function (card){ return card.coins; }).
+            sum();
+    }, this);
 };
 
 Player.prototype.draw = function (n) {
@@ -122,6 +145,22 @@ Player.prototype.draw = function (n) {
 var TurnPlayerMixin = function () {
     this.actionCount = ko.observable(1); 
     this.buyCount = ko.observable(1);
+    this.coins = ko.observable(0);
+    this.buy = function (supply) {
+        var buyCount = this.buyCount(),
+            coins = this.coins();
+            cost = supply.which().cost;
+        buyCount -= 1;
+        coins -= cost;
+
+        if (buyCount < 0 || coins < 0) {
+            return;
+        }
+
+        supply.pop().moveTo(this.discards);
+        this.buyCount(buyCount);
+        this.coins(coins);
+    };
 };
 
 var players = [new Player('Adam'), new Player('Bob'), new Player('Caroline')];
@@ -137,16 +176,48 @@ var numberOfKingdomCards = function (card) {
     return tagConfig.victory.call(card)? numberOfVictoryCards : numberOfActionCards;
 };
 
-var supplies = ([
+//util
+var stableSort = function (array, compare) {
+    var indexArray = new Array(array.length), i;
+    for (i = 0; i < indexArray.length; ++i) {
+        indexArray[i] = i;
+    }
+    indexArray.sort(function (lhsIndex, rhsIndex) {
+       var result = compare(array[lhsIndex], array[rhsIndex]);
+       return result !== 0? result : rhsIndex - lhsIndex; //keep index
+    });
+    var newArray = new Array(array.length);
+    for (i = 0; i < indexArray.length; ++i) {
+        newArray[i] = array[indexArray[i]];
+    }
+    return newArray;
+}
+
+var orderedSupplies = function (supplies) {
+    return stableSort(supplies, function (lhs, rhs) {
+        var lk, rk;
+        lhs = lhs.which();
+        rhs = rhs.which();
+        lk = tagConfig.kingdom.call(lhs);
+        rk = tagConfig.kingdom.call(rhs);
+
+        if (lk && rk) return -(rhs.cost - lhs.cost); //bring lower front.
+        else if (lk) return +1;  //bring non-kingdom front and keep original order.
+        else if (rk) return -1;
+        else return 0;
+    });
+};
+
+var supplies = orderedSupplies([
     new carpet.Supply(Copper, 60),
     new carpet.Supply(Silver, 40),
     new carpet.Supply(Gold, 30),
     new carpet.Supply(Estate, numberOfVictoryCards + INITIAL_NUMBER_OF_ESTATES * numberOfPlayers),
     new carpet.Supply(Duchy, numberOfVictoryCards),
     new carpet.Supply(Province, numberOfProvince)
-]).concat([Smithy, Village].map(function (which) {
+].concat([Smithy, Village].map(function (which) {
     return new carpet.Supply(which, numberOfKingdomCards(which));
-}));
+})));
 
 supplies.lookup = function (cardPrototype) {
     var i, s;
@@ -173,34 +244,43 @@ function setGameUp () {
 
 /////////////////////////////////////////
 
-var PlayerViewModel = function (player) {
-    this.nickName = player.nickName;
-    this.hands = ko.computed(function() { return player.hands.all(); }, this);
-    this.deckHeight = ko.computed(function () { return player.deck.observe().count(); }, this);
-    this.coins = ko.computed(function() {
-        return player.hands./*observe().*/
-            where(function (card) { return tagConfig.treasure.call(card.which()); }).
-            map(function (card){ return card.coins; }).
-            sum();
-    }, this);
+var PlayerViewModelMixin = function () {
+    this.deckHeight = ko.computed(function () { return this.deck.observe().count(); }, this);
 };
 
-var SupplyViewModel = function (supply) {
+var SupplyViewModel = function (supply, delegate) {
     this.numberOfRemaining = ko.computed(function () {
         return supply.numberOfRemaining();
     }, this);
-    
+
+    this._supply = supply;
+    this._delegate = delegate;
+
     this.displayName = supply.which().displayName;
-    
-    this.cost = supply.which().cost.toString();
+    this.cost = supply.which().cost;
 };
 
-var SupplyGroupViewModel = function (label, supplies) {
+SupplyViewModel.prototype.supply = function () {
+    return this._supply;
+};
+
+SupplyViewModel.prototype.which = function () {
+    return this._supply.which();
+};
+
+SupplyViewModel.prototype.onItemClicked = function (data, e) {
+    if (this._delegate.onItemClicked)
+    {
+        this._delegate.onItemClicked.apply(this, arguments);
+    }
+};
+
+var SupplyGroupViewModel = function (label, supplies, delegate) {
     this.label = label? label : false;
-    this.members = supplies.map(function (x) { return new SupplyViewModel(x); });
+    this.members = supplies.map(function (x) { return new SupplyViewModel(x, delegate); });
 };
 
-var SupplyGroupListViewModel = function (supplies, groupDefs) {
+var SupplyGroupListViewModel = function (supplies, groupDefs, delegate) {
     var members = new Array();
     for (var groupName in groupDefs) {
         var memberSupplies;
@@ -214,31 +294,151 @@ var SupplyGroupListViewModel = function (supplies, groupDefs) {
                 return supplies.lookup(card);
             });
         }
-        var groupViewModel = new SupplyGroupViewModel(groupName, memberSupplies);
+        var groupViewModel = new SupplyGroupViewModel(groupName, memberSupplies, delegate);
         
         members.push(groupViewModel);
     }
+    this._delegate = delegate;
     this.members = members;
+    this.buttonVisible = ko.observable(false);
+};
+
+SupplyGroupListViewModel.prototype.onOkClicked = function () {
+    if (this._delegate.onOkClicked)
+        this._delegate.onOkClicked.apply(this, arguments);
+};
+
+SupplyGroupListViewModel.prototype.onRollbackClicked = function () {
+    if (this._delegate.onRollbackClicked)
+        this._delegate.onRollbackClicked.apply(this, arguments);
 };
 
 
 $(document).on('pageinit', function (e) {
     var totalEllapsedTurns = ko.observable(0);
-    var supplyGroups = new SupplyGroupListViewModel(supplies, {
-        '': [Copper, Silver, Gold, Estate, Duchy, Province],
-        'Kingdom': function (card) { return tagConfig.kingdom.call(card); }
+    var turnPlayer = ko.computed(function () {
+        var i = totalEllapsedTurns(),
+            n = players.length;
+        var player = players[i % n];
+        var turnPlayer = carpet.createEx(player, TurnPlayerMixin);
+        return turnPlayer;
     });
+
+    //TODO: extract and rename buyphasePlayerViewModel
+    var turnPlayerViewModel = ko.computed(function () {
+        var player = turnPlayer();
+        var turnPlayerViewModel = carpet.createEx(
+            player,
+            PlayerViewModelMixin,
+            function () {
+                this.hands = ko.observableArray(
+                    player.hands.map(function (card) {
+                        return carpet.createEx(card, function () {
+                            this.click = function () {
+                                if (!tagConfig.action.call(this)) return false;
+
+                                this.action(player);
+                                return false;
+                            };
+                            this.selected = ko.observable(false);
+                        });
+                    })
+                );
+            }
+        );
+        return turnPlayerViewModel;
+    });
+
+    var supplyGroups = new SupplyGroupListViewModel(
+        supplies,
+        {
+            '': [Copper, Silver, Gold, Estate, Duchy, Province],
+            'Kingdom': function (card) { return tagConfig.kingdom.call(card); }
+        },
+        {
+            onItemClicked: function (supplyViewModel, e) {
+                var supplyViewModel = this,
+                    supply = supplyViewModel.supply(),
+                    state = supplyGroups._state;
+                if (state === null) return;
+                
+                if (!state.canSelect(supply)) return;
+
+                (function () {
+                    var duration = 80, //ATTENTION: sync with css
+                        element = e.target;
+                    $(element).addClass('clicked');
+                    setTimeout(function () { $(element).removeClass('clicked'); }, duration);
+                } ());
+
+                state.select(supply);
+            },
+            onOkClicked: function () {
+                var state = supplyGroups._state;
+                if (state === null) return;
+
+                state.commit();
+            },
+            onRollbackClicked: function () {
+                var state = supplyGroups._state;
+                if (state === null) return;
+
+                state.rollback();
+            }
+        }
+    );
+    supplyGroups._state = null;
+    supplyGroups.beginSession = function (options) {
+        var self = this,
+            deferred = $.Deferred(),
+            popped = [],
+            state = {
+                canSelect: function (supply) {
+                    return options.canSelect.call(self, supply);
+                },
+                select: function (supply) {
+                    var card = supply.pop();
+                    popped.push([supply, card]);
+                    options.select.call(self, supply, card);
+                    if (options.commitAtOnce) {
+                        state.commit();
+                    }
+                },
+                commit: function () {
+                    var bag;
+                    bag = new carpet.Bag(popped.map(function (pair) { return pair[1]; }));
+                    self.buttonVisible(false);
+                    self._state = null;
+                    deferred.resolve(bag);
+                },
+                rollback: function () {
+                              console.log('rollback');
+                    //push back
+                    popped.forEach(function (pair) {
+                        var supply = pair[0], card = pair[1];
+                        supply.push(card);
+                    });
+                    options.rollback.call(self);
+                }
+            };
+        options = options || {};
+        options.commitAtOnce = options.commitAtOnce || false;
+        options.canSelect = options.canSelect || doNothing;
+        options.select = options.select || doNothing;
+        options.rollback = options.rollback || doNothing;
+        self._state = state;
+        self.buttonVisible(!options.commitAtOnce);
+        return deferred.promise();
+    };
     
     var pageViewModel = (new function () {
-        this.turn = ko.computed(function () { return 1 + Math.floor(totalEllapsedTurns() / players.length); }, this);
-        this.supplyGroups = supplyGroups;
-        this.players = players.map(function (player) { return new PlayerViewModel(player); });
-        
-        this.turnPlayer = ko.computed(function () {
-            var i = totalEllapsedTurns(), n = this.players.length;
-            var player = this.players[i % n];
-            return carpet.createEx(player, TurnPlayerMixin);
+        this.turn = ko.computed(function () {
+            return 1 + Math.floor(totalEllapsedTurns() / players.length);
         }, this);
+
+        this.supplyGroups = supplyGroups;
+
+        this.turnPlayer = turnPlayerViewModel;
     } ());
     
     ko.applyBindings(
@@ -248,12 +448,47 @@ $(document).on('pageinit', function (e) {
     
     $('.requires-jquery-mobile-init').trigger('create');
     
-    $(e.target).one('vclick', function () {
-        //TODO: next step()
-    });
-    
     //init
     setGameUp();
+    
+    //test
+    //phase start
+    //TODO: reset actionCount, buyCount, coins
+
+    //action phase
+
+    //purchase phase
+    (function () {
+        var player = turnPlayer(),
+            oldBuyCount = player.buyCount(),
+            oldCoins = player.coins();
+        oldCoins += player.coinsInHands();
+        
+        player.coins(oldCoins);
+        supplyGroups.beginSession({
+            commitAtOnce: player.buyCount() < 2,
+            canSelect: function (supply) {
+                return player.buyCount() > 0 && player.coins() >= supply.which().cost;
+            },
+            select: function (supply, card) {
+                player.buyCount(player.buyCount() - 1);
+                player.coins(player.coins() - supply.which().cost);
+            },
+            rollback: function () {
+                player.buyCount(oldBuyCount);
+                player.coins(oldCoins);
+            }
+        }).then(function (selectedCards) {
+            selectedCards.moveTo(player.discards);
+
+            //cleanup phase
+            player.hands.moveTo(player.discards);
+            player.draw(INITIAL_NUMBER_OF_HANDS);
+
+            //next
+            //totalEllapsedTurns(totalEllapsedTurns() + 1);
+        });
+    } ());
 });
 </script>
 <body>
@@ -274,7 +509,9 @@ $(document).on('pageinit', function (e) {
                             'ui-block-c': $index() % 5 === 2, 
                             'ui-block-d': $index() % 5 === 3, 
                             'ui-block-e': $index() % 5 === 4
-                        }">
+                        },
+                        event: { vclick: click }
+                        ">
                         <div><!-- class="carpet-tagged-treasure carpet-tagged-action carpet-tagged-victory" -->
                             <span class="carpet-tag-marker carpet-tag-marker-for-treasure"></span>
                             <span class="carpet-tag-marker carpet-tag-marker-for-kingdom"></span>
@@ -296,17 +533,22 @@ $(document).on('pageinit', function (e) {
                 
             </div>
             
-            <div>
+            <div data-bind="with: supplyGroups">
                 <h3>Supply</h3>
                 <div data-bind="template: {name: 'template-supply-listview'}" class="requires-jquery-mobile-init"></div>
             </div>
         </div>
     </div>
     <script type="text/html" id="template-supply-listview">
-        <ul data-role="listview" data-theme="c" data-bind="foreach: supplyGroups.members">
+        <div class="ui-grid-a" data-bind="css: {'button-invisible': !buttonVisible()}"
+             style="margin-bottom: 20px">
+            <div class="ui-block-a"><a data-role="button" data-mini="true" data-theme="d" data-bind="event: { vclick: onOkClicked }">確定する</a></div>
+            <div class="ui-block-b"><a data-role="button" data-mini="true" data-theme="a" data-bind="event: { vclick: onRollbackClicked }">やりなおす</a></div>
+        </div>
+        <ul data-role="listview" data-theme="c" data-bind="foreach: members">
             <li data-role="list-divider" data-bind="visible: label, text: label"></li>
             <!-- ko foreach: members -->
-            <li>
+            <li class="slideup-on-click" data-bind="event: { vclick: onItemClicked }">
                 <span data-bind="text: cost" style="border: 1px solid rgb(230, 230, 0); background-color: rgb(255, 255, 102); border-radius: 8px; height: 1ex; min-width: 1ex; width: 1ex; padding: 0 2px;"></span>
                 <span style="margin-left: 10px;" data-bind="text: displayName"></span>
                 <span class="ui-li-count" data-bind="text: numberOfRemaining"></span>
